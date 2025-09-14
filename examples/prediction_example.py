@@ -42,15 +42,27 @@ def plot_prediction(kline_df, pred_df):
 tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
 model = Kronos.from_pretrained("NeoQuasar/Kronos-small")
 
+# tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-2k")
+# model = Kronos.from_pretrained("NeoQuasar/Kronos-mini")
+
+# tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
+# model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
+
 # 2. Instantiate Predictor
-predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
+# predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
+predictor = KronosPredictor(model, tokenizer, device="xpu", max_context=512)
+# predictor = KronosPredictor(model, tokenizer, device="xpu", max_context=2000)
 
 # 3. Prepare Data
-df = pd.read_csv("./data/XSHG_5min_600977.csv")
+# df = pd.read_csv("./data/XSHG_5min_600977.csv")
+df = pd.read_csv("./data/000016.csv")
 df['timestamps'] = pd.to_datetime(df['timestamps'])
 
-lookback = 400
-pred_len = 120
+lookback = 500
+pred_len = 90
+
+# lookback = 1600
+# pred_len = 400
 
 x_df = df.loc[:lookback-1, ['open', 'high', 'low', 'close', 'volume', 'amount']]
 x_timestamp = df.loc[:lookback-1, 'timestamps']

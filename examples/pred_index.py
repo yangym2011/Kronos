@@ -6,7 +6,7 @@ import sys
 sys.path.append("../")
 from model import Kronos, KronosTokenizer, KronosPredictor
 
-def fetch_index_data(symbol, period="daily", start_date=None, end_date=None):
+def fetch_index_data(symbol, period="daily", start_date=None, end_date=None, count=512):
     """
     Fetch and process historical index data from akshare for a given symbol.
     
@@ -38,8 +38,8 @@ def fetch_index_data(symbol, period="daily", start_date=None, end_date=None):
     # Convert the timestamps column to datetime format
     new_df['timestamps'] = pd.to_datetime(new_df['timestamps'])
 
-    # Select the most recent 512 rows
-    recent_df = new_df.tail(512).reset_index(drop=True)
+    # Select the most recent rows
+    recent_df = new_df.tail(count).reset_index(drop=True)
 
     return recent_df
 
@@ -98,36 +98,54 @@ def generate_trading_days(start_date, num_days, holidays=None):
     return future_dates
 
 
-def plot_prediction(kline_df, pred_df):
-    # Combine close prices
-    sr_close = kline_df['close']
-    sr_pred_close = pred_df['close']
-    sr_close.name = 'Ground Truth'
-    sr_pred_close.name = 'Prediction'
-    close_df = pd.concat([sr_close, sr_pred_close], axis=1)
-
-    # Combine volumes
-    sr_volume = kline_df['volume']
-    sr_pred_volume = pred_df['volume']
-    sr_volume.name = 'Ground Truth'
-    sr_pred_volume.name = 'Prediction'
-    volume_df = pd.concat([sr_volume, sr_pred_volume], axis=1)
-
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-
-    ax1.plot(close_df['Ground Truth'], label='Ground Truth', color='blue', linewidth=1.5)
-    ax1.plot(close_df['Prediction'], label='Prediction', color='red', linewidth=1.5)
+def plot_actual_vs_prediction(kline_df, pred_df):
+    """
+    Plot actual vs predicted close prices and volumes in two subplots, handling overlapping data.
+    
+    Parameters:
+    - kline_df (pandas.DataFrame): DataFrame with actual data, indexed by datetime, containing 'close' and 'volume' columns.
+    - pred_df (pandas.DataFrame): DataFrame with predicted data, indexed by datetime, containing 'close' and 'volume' columns.
+    
+    The function merges the data on their datetime indices (outer join) to handle overlaps, 
+    plotting actual and predicted lines across the entire timeline.
+    """
+    # Ensure indices are datetime
+    if not isinstance(kline_df.index, pd.DatetimeIndex):
+        kline_df.index = pd.to_datetime(kline_df.index)
+    if not isinstance(pred_df.index, pd.DatetimeIndex):
+        pred_df.index = pd.to_datetime(pred_df.index)
+    
+    # Combine close prices with outer join
+    close_df = pd.DataFrame({
+        'Actual': kline_df['close'],
+        'Prediction': pred_df['close']
+    })
+    
+    # Combine volumes with outer join
+    volume_df = pd.DataFrame({
+        'Actual': kline_df['volume'],
+        'Prediction': pred_df['volume']
+    })
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+    
+    # Plot close prices
+    ax1.plot(close_df.index, close_df['Actual'], label='Actual', color='blue', linewidth=1.5)
+    ax1.plot(close_df.index, close_df['Prediction'], label='Prediction', color='red', linewidth=1.5)
     ax1.set_ylabel('Close Price', fontsize=14)
-    ax1.legend(loc='lower left', fontsize=12)
+    ax1.legend(loc='upper left', fontsize=12)
     ax1.grid(True)
-
-    ax2.plot(volume_df['Ground Truth'], label='Ground Truth', color='blue', linewidth=1.5)
-    ax2.plot(volume_df['Prediction'], label='Prediction', color='red', linewidth=1.5)
+    ax1.set_title('Actual vs Predicted Close Prices', fontsize=16)
+    
+    # Plot volumes
+    ax2.plot(volume_df.index, volume_df['Actual'], label='Actual', color='blue', linewidth=1.5)
+    ax2.plot(volume_df.index, volume_df['Prediction'], label='Prediction', color='red', linewidth=1.5)
     ax2.set_ylabel('Volume', fontsize=14)
     ax2.legend(loc='upper left', fontsize=12)
     ax2.grid(True)
-
-    # 可选：旋转 x 轴标签以显示日期（如果索引是日期，会自动格式化）
+    ax2.set_title('Actual vs Predicted Volumes', fontsize=16)
+    
+    # Rotate x-axis labels for better readability
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
@@ -135,25 +153,22 @@ def plot_prediction(kline_df, pred_df):
 
 # 1. Load Model and Tokenizer
 tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
-model = Kronos.from_pretrained("NeoQuasar/Kronos-small")
-
-# tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
-# model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
+# model = Kronos.from_pretrained("NeoQuasar/Kronos-small")
+model = Kronos.from_pretrained("NeoQuasar/Kronos-base")
 
 # 2. Instantiate Predictor
 # predictor = KronosPredictor(model, tokenizer, device="cuda:0", max_context=512)
 predictor = KronosPredictor(model, tokenizer, device="xpu", max_context=512)
 
 # 3. Prepare Data
-df = fetch_index_data(symbol="000300")
+df = fetch_index_data(symbol="000300", count=512+30)
 
 lookback = 512
 pred_len = 90
 
 x_df = df.loc[:lookback-1, ['open', 'high', 'low', 'close', 'volume', 'amount']]
 x_timestamp = df.loc[:lookback-1, 'timestamps']
-# y_timestamp = df.loc[lookback:lookback+pred_len-1, 'timestamps']
-y_timestamp = pd.Series(generate_trading_days(start_date=datetime.now().strftime("%Y-%m-%d"), num_days=pred_len))
+y_timestamp = pd.Series(generate_trading_days(start_date=df.iloc[-30]['timestamps'].strftime("%Y-%m-%d"), num_days=pred_len))
 
 # 4. Make Prediction
 pred_df = predictor.predict(
@@ -161,9 +176,9 @@ pred_df = predictor.predict(
     x_timestamp=x_timestamp,
     y_timestamp=y_timestamp,
     pred_len=pred_len,
-    T=0.9,
-    top_p=0.9,
-    sample_count=5,
+    T=1.0,
+    top_p=1.0,
+    sample_count=3,
     verbose=True
 )
 
@@ -175,20 +190,5 @@ print(pred_df.head())
 # 先将历史数据的索引设置为 timestamps，使其成为时间序列
 kline_df = df.set_index('timestamps') 
 
-# 生成预测的未来时间戳，从历史最后日期的下一天开始
-last_historical_date = kline_df.index[-1] + timedelta(days=1)  # 下一天
-y_future = generate_trading_days(start_date=last_historical_date.strftime("%Y-%m-%d"), num_days=pred_len)
-
-# 设置 pred_df 的索引为未来时间戳
-pred_df.index = y_future
-
-# 创建扩展 DataFrame：concat 历史和预测数据
-kline_df_extended = pd.concat([kline_df, pred_df], axis=0, join='outer')
-
-# 更新扩展 DataFrame 中的 close 和 volume（如果有 NaN，会自动填充）
-kline_df_extended.loc[pred_df.index, ['close', 'volume']] = pred_df[['close', 'volume']]
-
-# visualize
-plot_prediction(kline_df_extended, pred_df)
-
+plot_actual_vs_prediction(kline_df, pred_df)
 
